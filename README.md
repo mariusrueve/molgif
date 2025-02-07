@@ -1,5 +1,7 @@
 # molgif
 
+molgif generates beautiful rotating GIFs of molecules using SDF as input.
+
 short intro:
 
 ```bash
