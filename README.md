@@ -1,6 +1,6 @@
 # molgif
 
-molgif generates beautiful rotating GIFs of molecules using SDF as input.
+`molgif` generates beautiful GIFs of rotating molecules using SDF as input.
 
 short intro:
 
