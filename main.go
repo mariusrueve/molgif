@@ -3,11 +3,13 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/color/palette"
 	"image/gif"
+	"log"
 	"math"
 	"os"
 	"strconv"
@@ -32,8 +34,6 @@ func (v Vec3) Normalize() Vec3 {
 	}
 	return v.Mul(1 / l)
 }
-
-// Cross returns the cross product of v and o.
 func (v Vec3) Cross(o Vec3) Vec3 {
 	return Vec3{
 		X: v.Y*o.Z - v.Z*o.Y,
@@ -89,7 +89,6 @@ func intersectSphere(origin, dir Vec3, sphere Sphere) (float64, bool) {
 // intersectCylinder computes the intersection of a ray with a finite cylinder (including caps).
 // It returns the smallest positive t (if any) and the surface normal at the hit.
 func intersectCylinder(origin, dir Vec3, cyl Cylinder) (float64, bool, Vec3) {
-	// Define cylinder axis and its length.
 	v := cyl.p2.Sub(cyl.p1)
 	L := v.Length()
 	if L == 0 {
@@ -98,7 +97,7 @@ func intersectCylinder(origin, dir Vec3, cyl Cylinder) (float64, bool, Vec3) {
 	vNorm := v.Mul(1 / L)
 	dp := origin.Sub(cyl.p1)
 
-	// --- Lateral surface intersection ---
+	// Lateral surface intersection.
 	dDotV := dir.Dot(vNorm)
 	dPerp := dir.Sub(vNorm.Mul(dDotV))
 	dpDotV := dp.Dot(vNorm)
@@ -121,13 +120,11 @@ func intersectCylinder(origin, dir Vec3, cyl Cylinder) (float64, bool, Vec3) {
 			for _, tCandidate := range []float64{t1, t2} {
 				if tCandidate > epsilon {
 					hitPoint := origin.Add(dir.Mul(tCandidate))
-					// Check that the hit point lies between the end–caps.
 					proj := hitPoint.Sub(cyl.p1).Dot(vNorm)
 					if proj >= 0 && proj <= L {
 						if tCandidate < tMin {
 							tMin = tCandidate
 							hit = true
-							// Compute normal by subtracting the projection.
 							projectionPoint := cyl.p1.Add(vNorm.Mul(proj))
 							hitNormal = hitPoint.Sub(projectionPoint).Normalize()
 						}
@@ -137,7 +134,7 @@ func intersectCylinder(origin, dir Vec3, cyl Cylinder) (float64, bool, Vec3) {
 		}
 	}
 
-	// --- Cap intersections ---
+	// Cap intersections.
 	if math.Abs(dir.Dot(vNorm)) > epsilon {
 		tCap := -(dp.Dot(vNorm)) / dir.Dot(vNorm)
 		if tCap > epsilon && tCap < tMin {
@@ -163,7 +160,6 @@ func intersectCylinder(origin, dir Vec3, cyl Cylinder) (float64, bool, Vec3) {
 			}
 		}
 	}
-
 	return tMin, hit, hitNormal
 }
 
@@ -235,7 +231,7 @@ func computeBoundingSphere(spheres []Sphere, bonds []Cylinder) (Vec3, float64) {
 			}
 		}
 	}
-	// Include bonds (using both endpoints plus bond radius).
+	// Include bonds.
 	for _, b := range bonds {
 		for _, pt := range []Vec3{b.p1, b.p2} {
 			for _, offset := range []Vec3{{b.radius, b.radius, b.radius}, {-b.radius, -b.radius, -b.radius}} {
@@ -271,11 +267,10 @@ func computeBoundingSphere(spheres []Sphere, bonds []Cylinder) (Vec3, float64) {
 }
 
 // rayColor casts a ray from the camera origin through the scene and returns the shaded color.
-// It first tests against a bounding sphere for the scene.
 func rayColor(origin, dir Vec3, spheres []Sphere, cylinders []Cylinder, lightDir Vec3,
 	ambient, diffuseCoeff, specularCoeff, shininess float64, bsCenter Vec3, bsRadius float64) color.Color {
 
-	// Early exit: if the ray does not hit the scene’s bounding sphere, return background.
+	// Early exit if the ray misses the scene’s bounding sphere.
 	if t, ok := intersectSphere(origin, dir, Sphere{center: bsCenter, radius: bsRadius}); !ok || t < 0 {
 		return color.RGBA{255, 255, 255, 255}
 	}
@@ -285,7 +280,7 @@ func rayColor(origin, dir Vec3, spheres []Sphere, cylinders []Cylinder, lightDir
 	var hitColor color.RGBA
 	var hitNormal Vec3
 
-	// Check spheres.
+	// Test sphere intersections.
 	for _, sphere := range spheres {
 		if t, ok := intersectSphere(origin, dir, sphere); ok && t < closestT {
 			closestT = t
@@ -295,7 +290,7 @@ func rayColor(origin, dir Vec3, spheres []Sphere, cylinders []Cylinder, lightDir
 			hitColor = sphere.color
 		}
 	}
-	// Check cylinders.
+	// Test cylinder intersections.
 	for _, cyl := range cylinders {
 		if t, ok, normal := intersectCylinder(origin, dir, cyl); ok && t < closestT {
 			closestT = t
@@ -306,7 +301,7 @@ func rayColor(origin, dir Vec3, spheres []Sphere, cylinders []Cylinder, lightDir
 	}
 
 	if !hitFound {
-		return color.RGBA{255, 255, 255, 255} // White background.
+		return color.RGBA{255, 255, 255, 255} // Background color.
 	}
 
 	hitPoint := origin.Add(dir.Mul(closestT))
@@ -352,14 +347,12 @@ func rayColor(origin, dir Vec3, spheres []Sphere, cylinders []Cylinder, lightDir
 	return color.RGBA{uint8(r), uint8(g), uint8(b), 255}
 }
 
-// renderFrame renders one image (width x height) via ray–tracing the scene.
-func renderFrame(spheres []Sphere, cylinders []Cylinder, width, height int, fov float64, aspect float64, lightDir Vec3,
+// renderFrame renders one image via ray–tracing the scene.
+func renderFrame(spheres []Sphere, cylinders []Cylinder, width, height int, fov, aspect float64, lightDir Vec3,
 	ambient, diffuseCoeff, specularCoeff, shininess float64, camRays []Vec3) *image.RGBA {
 
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	cameraOrigin := Vec3{0, 0, 0}
-
-	// Compute a bounding sphere for a quick early–exit in rayColor.
 	bsCenter, bsRadius := computeBoundingSphere(spheres, cylinders)
 
 	var wg sync.WaitGroup
@@ -369,8 +362,7 @@ func renderFrame(spheres []Sphere, cylinders []Cylinder, width, height int, fov 
 			defer wg.Done()
 			for i := 0; i < width; i++ {
 				idx := j*width + i
-				rayDir := camRays[idx] // use the precomputed ray direction
-
+				rayDir := camRays[idx]
 				col := rayColor(cameraOrigin, rayDir, spheres, cylinders, lightDir,
 					ambient, diffuseCoeff, specularCoeff, shininess, bsCenter, bsRadius)
 				img.Set(i, j, col)
@@ -381,7 +373,7 @@ func renderFrame(spheres []Sphere, cylinders []Cylinder, width, height int, fov 
 	return img
 }
 
-// imageToPaletted converts an RGBA image into a paletted image using the given palette.
+// imageToPaletted converts an RGBA image into a paletted image using the provided palette.
 func imageToPaletted(img *image.RGBA, pal color.Palette) *image.Paletted {
 	bounds := img.Bounds()
 	palImg := image.NewPaletted(bounds, pal)
@@ -401,7 +393,6 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 	}
 	defer file.Close()
 
-	// Read all lines.
 	var lines []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -410,12 +401,11 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, nil, err
 	}
-
 	if len(lines) < 4 {
 		return nil, nil, fmt.Errorf("file too short to be a valid SDF")
 	}
 
-	// The counts line is line 4 (index 3).
+	// Counts line is line 4 (index 3).
 	countsLine := lines[3]
 	fields := strings.Fields(countsLine)
 	if len(fields) < 2 {
@@ -525,10 +515,9 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 		scale = 1.0 / maxDist
 	}
 
-	// Atom scale factor to shrink spheres a bit.
 	const atomScaleFactor = 0.6
 
-	// Approximate covalent radii and element colors.
+	// Covalent radii and element colors.
 	radiiMap := map[string]float64{
 		"H":  0.31,
 		"C":  0.76,
@@ -550,7 +539,6 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 		"Cl": {0, 255, 0, 255},
 	}
 
-	// Build the list of spheres.
 	var spheres []Sphere
 	for _, a := range atoms {
 		pos := a.pos.Sub(center).Mul(scale)
@@ -567,12 +555,9 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 	}
 
 	// Create bonds as cylinders.
-	// For bonds with order > 1, we now create multiple cylinders whose endpoints are computed
-	// so that they lie exactly on the surfaces of the atoms.
-	var bonds []Cylinder
+	bonds := []Cylinder{}
 	bondColor := color.RGBA{150, 150, 150, 255}
 	for _, bRec := range bondsRec {
-		// Check indices.
 		if bRec.a < 0 || bRec.a >= len(spheres) || bRec.b < 0 || bRec.b >= len(spheres) {
 			continue
 		}
@@ -588,32 +573,21 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 		if math.Abs(dNorm.Dot(ref)) > 0.9 {
 			ref = Vec3{0, 1, 0}
 		}
-		// Compute a perpendicular offset vector.
 		offsetVec := dNorm.Cross(ref).Normalize()
-
-		// Radii for each sphere.
 		r1 := spheres[bRec.a].radius
 		r2 := spheres[bRec.b].radius
-
-		// Compute bond radius.
 		bondRadius := 0.225 * math.Min(r1, r2)
 
 		switch bRec.order {
 		case 1:
-			// Single bond: one cylinder.
 			baseP1 := p1.Add(dNorm.Mul(r1))
 			baseP2 := p2.Sub(dNorm.Mul(r2))
 			bonds = append(bonds, Cylinder{baseP1, baseP2, bondRadius, bondColor})
 		case 2:
-			// Double bond: create two parallel cylinders.
-			// Adjust bondFactor to change how far the bond extends into the atom.
-			const bondFactor = 0.8 // try values like 0.8 or 0.2 to control intrusion.
+			const bondFactor = 0.8
 			offMag := 0.3 * math.Min(r1, r2)
 			for _, sign := range []float64{1, -1} {
-				// Compute the offset from the central bond axis.
 				offset := offsetVec.Mul(sign * offMag)
-				// The distances from the center along the bond direction.
-				// Multiplying by bondFactor makes the bonds extend further into the atoms.
 				t1 := bondFactor * math.Sqrt(math.Max(0, r1*r1-offset.Dot(offset)))
 				t2 := bondFactor * math.Sqrt(math.Max(0, r2*r2-offset.Dot(offset)))
 				p1off := p1.Add(offset).Add(dNorm.Mul(t1))
@@ -621,14 +595,10 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 				bonds = append(bonds, Cylinder{p1off, p2off, bondRadius, bondColor})
 			}
 		case 3:
-			// Triple bond: one central cylinder plus two offset cylinders.
-			const bondFactor = 0.8 // adjust as needed
-			// Central cylinder.
+			const bondFactor = 0.8
 			baseP1 := p1.Add(dNorm.Mul(r1 * bondFactor))
 			baseP2 := p2.Sub(dNorm.Mul(r2 * bondFactor))
 			bonds = append(bonds, Cylinder{baseP1, baseP2, bondRadius, bondColor})
-
-			// Two offset cylinders.
 			offMag := 0.3 * math.Min(r1, r2)
 			for _, sign := range []float64{1, -1} {
 				offset := offsetVec.Mul(sign * offMag)
@@ -648,94 +618,118 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 	return spheres, bonds, nil
 }
 
-func main() {
-	// init empty string for input file
-	inputFile := ""
-	if len(os.Args) > 1 {
-		inputFile = os.Args[1]
+// Config holds the rendering and animation settings.
+type Config struct {
+	InputFile   string
+	OutputFile  string
+	Width       int
+	Height      int
+	FOV         float64
+	TotalFrames int
+	Tilt        float64
+	ZOffset     float64
+	Ambient     float64
+	Diffuse     float64
+	Specular    float64
+	Shininess   float64
+}
+
+// parseFlags processes command–line arguments and returns a Config.
+func parseFlags() Config {
+	cfg := Config{}
+	flag.StringVar(&cfg.InputFile, "in", "", "Path to the input SDF file (required)")
+	flag.StringVar(&cfg.OutputFile, "out", "output.gif", "Path to the output GIF file")
+	flag.IntVar(&cfg.Width, "width", 1920, "Image width in pixels")
+	flag.IntVar(&cfg.Height, "height", 1080, "Image height in pixels")
+	flag.Float64Var(&cfg.FOV, "fov", math.Pi/3, "Vertical field of view (radians)")
+	flag.IntVar(&cfg.TotalFrames, "frames", 120, "Total number of frames in the animation")
+	flag.Float64Var(&cfg.Tilt, "tilt", 0.0, "Tilt angle (radians) applied about the X–axis")
+	flag.Float64Var(&cfg.ZOffset, "zoffset", 2.25, "Camera translation along Z axis")
+	flag.Float64Var(&cfg.Ambient, "ambient", 0.7, "Ambient light coefficient")
+	flag.Float64Var(&cfg.Diffuse, "diffuse", 1.0, "Diffuse light coefficient")
+	flag.Float64Var(&cfg.Specular, "specular", 0.7, "Specular light coefficient")
+	flag.Float64Var(&cfg.Shininess, "shininess", 20.0, "Shininess coefficient for specular highlights")
+	flag.Parse()
+
+	if cfg.InputFile == "" {
+		flag.Usage()
+		log.Fatal("Error: input SDF file must be provided using -in flag.")
 	}
-	// check if the input file exists
-	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
-		fmt.Printf("Error: %s does not exist\n", inputFile)
-		return
+	return cfg
+}
+
+// run executes the main program logic.
+func run(cfg Config) error {
+	// Check input file exists.
+	if _, err := os.Stat(cfg.InputFile); os.IsNotExist(err) {
+		return fmt.Errorf("input file %q does not exist", cfg.InputFile)
 	}
-	spheres, bonds, err := parseSDF(inputFile)
+
+	spheres, bonds, err := parseSDF(cfg.InputFile)
 	if err != nil {
-		fmt.Printf("Error reading %s: %v\n", inputFile, err)
-		return
+		return fmt.Errorf("error parsing SDF: %w", err)
 	}
 
-	// Camera and image settings.
-	const width = 1920
-	const height = 1080
-	const fov = math.Pi / 3 // 60° vertical FOV.
-	aspect := float64(width) / float64(height)
+	aspect := float64(cfg.Width) / float64(cfg.Height)
 	lightDir := Vec3{-1, 1, 1}.Normalize()
-	ambient := 0.7       // ambient light coefficient. Lower values make shadows darker.
-	diffuseCoeff := 1.0  // diffuse reflection coefficient. Higher values make the scene brighter. Values between 0 and 1 are allowed.
-	specularCoeff := 0.7 // specular reflection coefficient. Higher values make highlights more visible. Values between 0 and 1 are allowed.
-	shininess := 20.0    // shininess coefficient.
+	camRays := precomputeRays(cfg.Width, cfg.Height, cfg.FOV, aspect)
 
-	totalFrames := 120 // Full 360° rotation.
-	var images []*image.Paletted
-	var delays []int
+	images := []*image.Paletted{}
+	delays := []int{}
 
-	// Rotate molecule about Y (with a constant tilt about X) and translate along Z.
-	tilt := 0.0     // radians
-	zOffset := 2.25 // so molecule is in front of camera
-
-	// Precompute the camera rays once.
-	camRays := precomputeRays(width, height, fov, aspect)
-
-	for frame := 0; frame < totalFrames; frame++ {
-		theta := float64(frame) * 2 * math.Pi / float64(totalFrames)
-
+	// Render each frame.
+	for frame := 0; frame < cfg.TotalFrames; frame++ {
+		theta := float64(frame) * 2 * math.Pi / float64(cfg.TotalFrames)
 		// Rotate and translate spheres.
 		frameSpheres := make([]Sphere, len(spheres))
 		for i, s := range spheres {
 			rotated := rotateY(s.center, theta)
-			rotated = rotateX(rotated, tilt)
-			rotated = rotated.Add(Vec3{0, 0, zOffset})
+			rotated = rotateX(rotated, cfg.Tilt)
+			rotated = rotated.Add(Vec3{0, 0, cfg.ZOffset})
 			frameSpheres[i] = Sphere{rotated, s.radius, s.color}
 		}
-
 		// Rotate and translate bonds.
 		frameBonds := make([]Cylinder, len(bonds))
 		for i, b := range bonds {
-			rotatedP1 := rotateY(b.p1, theta)
-			rotatedP1 = rotateX(rotatedP1, tilt)
-			rotatedP1 = rotatedP1.Add(Vec3{0, 0, zOffset})
-			rotatedP2 := rotateY(b.p2, theta)
-			rotatedP2 = rotateX(rotatedP2, tilt)
-			rotatedP2 = rotatedP2.Add(Vec3{0, 0, zOffset})
-			frameBonds[i] = Cylinder{rotatedP1, rotatedP2, b.radius, b.color}
+			rotP1 := rotateY(b.p1, theta)
+			rotP1 = rotateX(rotP1, cfg.Tilt)
+			rotP1 = rotP1.Add(Vec3{0, 0, cfg.ZOffset})
+			rotP2 := rotateY(b.p2, theta)
+			rotP2 = rotateX(rotP2, cfg.Tilt)
+			rotP2 = rotP2.Add(Vec3{0, 0, cfg.ZOffset})
+			frameBonds[i] = Cylinder{rotP1, rotP2, b.radius, b.color}
 		}
-
-		// Render the frame using the precomputed camera rays.
-		img := renderFrame(frameSpheres, frameBonds, width, height, fov, aspect, lightDir,
-			ambient, diffuseCoeff, specularCoeff, shininess, camRays)
+		// Render the frame.
+		img := renderFrame(frameSpheres, frameBonds, cfg.Width, cfg.Height, cfg.FOV, aspect, lightDir,
+			cfg.Ambient, cfg.Diffuse, cfg.Specular, cfg.Shininess, camRays)
 		palImg := imageToPaletted(img, palette.Plan9)
 		images = append(images, palImg)
-		delays = append(delays, 5) // delay in 10ms units
-		fmt.Printf("Rendered frame %d/%d\n", frame+1, totalFrames)
+		delays = append(delays, 5) // Delay in 10ms units.
+		log.Printf("Rendered frame %d/%d", frame+1, cfg.TotalFrames)
 	}
 
-	// Assemble the animated GIF.
+	// Assemble and write the animated GIF.
 	outGif := &gif.GIF{
 		Image:     images,
 		Delay:     delays,
-		LoopCount: 0, // infinite loop.
+		LoopCount: 0, // Infinite loop.
 	}
-	outFile, err := os.Create("output.gif")
+	outFile, err := os.Create(cfg.OutputFile)
 	if err != nil {
-		fmt.Printf("Error creating output.gif: %v\n", err)
-		return
+		return fmt.Errorf("error creating output file: %w", err)
 	}
 	defer outFile.Close()
 
 	if err := gif.EncodeAll(outFile, outGif); err != nil {
-		fmt.Printf("Error encoding GIF: %v\n", err)
-		return
+		return fmt.Errorf("error encoding GIF: %w", err)
 	}
-	fmt.Println("Successfully wrote output.gif")
+	log.Printf("Successfully wrote %q", cfg.OutputFile)
+	return nil
+}
+
+func main() {
+	cfg := parseFlags()
+	if err := run(cfg); err != nil {
+		log.Fatalf("Error: %v", err)
+	}
 }
