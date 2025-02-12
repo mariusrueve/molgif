@@ -595,44 +595,52 @@ func parseSDF(filename string) ([]Sphere, []Cylinder, error) {
 		r1 := spheres[bRec.a].radius
 		r2 := spheres[bRec.b].radius
 
-		// Default endpoints (for a single bond) lie exactly on the sphere surfaces.
-		factor := 0.5 // factor to move the bond endpoints towards the center. 1 is at the surface. <1 is inside the sphere.
-		baseP1 := p1.Add(dNorm.Mul(r1 * factor))
-		baseP2 := p2.Sub(dNorm.Mul(r2 * factor))
-
 		// Compute bond radius.
-		bondRadius := 0.2 * math.Min(r1, r2)
+		bondRadius := 0.225 * math.Min(r1, r2)
 
 		switch bRec.order {
 		case 1:
 			// Single bond: one cylinder.
+			baseP1 := p1.Add(dNorm.Mul(r1))
+			baseP2 := p2.Sub(dNorm.Mul(r2))
 			bonds = append(bonds, Cylinder{baseP1, baseP2, bondRadius, bondColor})
 		case 2:
 			// Double bond: create two parallel cylinders.
+			// Adjust bondFactor to change how far the bond extends into the atom.
+			const bondFactor = 0.8 // try values like 0.8 or 0.2 to control intrusion.
 			offMag := 0.3 * math.Min(r1, r2)
 			for _, sign := range []float64{1, -1} {
-				// Compute the perpendicular offset.
+				// Compute the offset from the central bond axis.
 				offset := offsetVec.Mul(sign * offMag)
-				t1 := math.Sqrt(math.Max(0, r1*r1-offset.Dot(offset)))
-				t2 := math.Sqrt(math.Max(0, r2*r2-offset.Dot(offset)))
+				// The distances from the center along the bond direction.
+				// Multiplying by bondFactor makes the bonds extend further into the atoms.
+				t1 := bondFactor * math.Sqrt(math.Max(0, r1*r1-offset.Dot(offset)))
+				t2 := bondFactor * math.Sqrt(math.Max(0, r2*r2-offset.Dot(offset)))
 				p1off := p1.Add(offset).Add(dNorm.Mul(t1))
 				p2off := p2.Add(offset).Sub(dNorm.Mul(t2))
 				bonds = append(bonds, Cylinder{p1off, p2off, bondRadius, bondColor})
 			}
 		case 3:
-			// Triple bond: one central cylinder and two offset cylinders.
+			// Triple bond: one central cylinder plus two offset cylinders.
+			const bondFactor = 0.8 // adjust as needed
+			// Central cylinder.
+			baseP1 := p1.Add(dNorm.Mul(r1 * bondFactor))
+			baseP2 := p2.Sub(dNorm.Mul(r2 * bondFactor))
 			bonds = append(bonds, Cylinder{baseP1, baseP2, bondRadius, bondColor})
-			offMag := 0.2 * math.Min(r1, r2)
+
+			// Two offset cylinders.
+			offMag := 0.3 * math.Min(r1, r2)
 			for _, sign := range []float64{1, -1} {
 				offset := offsetVec.Mul(sign * offMag)
-				t1 := math.Sqrt(math.Max(0, r1*r1-offset.Dot(offset)))
-				t2 := math.Sqrt(math.Max(0, r2*r2-offset.Dot(offset)))
+				t1 := bondFactor * math.Sqrt(math.Max(0, r1*r1-offset.Dot(offset)))
+				t2 := bondFactor * math.Sqrt(math.Max(0, r2*r2-offset.Dot(offset)))
 				p1off := p1.Add(offset).Add(dNorm.Mul(t1))
 				p2off := p2.Add(offset).Sub(dNorm.Mul(t2))
 				bonds = append(bonds, Cylinder{p1off, p2off, bondRadius, bondColor})
 			}
 		default:
-			// Otherwise, treat as a single bond.
+			baseP1 := p1.Add(dNorm.Mul(r1))
+			baseP2 := p2.Sub(dNorm.Mul(r2))
 			bonds = append(bonds, Cylinder{baseP1, baseP2, bondRadius, bondColor})
 		}
 	}
@@ -673,8 +681,8 @@ func main() {
 	var delays []int
 
 	// Rotate molecule about Y (with a constant tilt about X) and translate along Z.
-	tilt := 0.0    // radians
-	zOffset := 2.0 // so molecule is in front of camera
+	tilt := 0.0     // radians
+	zOffset := 2.25 // so molecule is in front of camera
 
 	// Precompute the camera rays once.
 	camRays := precomputeRays(width, height, fov, aspect)
